@@ -1,0 +1,250 @@
+---
+title: "dissertation_model"
+output: html_document
+date: "2024-08-04"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(plm)
+```
+
+```{r}
+library(readxl)
+```
+
+```{r}
+file_path <- "D:/OneDrive - University of Warwick/model_data/data_try.xlsx"
+data <- read_excel(file_path)
+```
+
+```{r}
+data <- data[, -c(1)]
+```
+
+
+
+
+
+```{r}
+library(dplyr)
+merged_df <- data %>%
+  mutate(
+    head_age = relevel(factor(head_age), ref = "Under 25 Years"),
+    head_education = relevel(factor(head_education), ref = "Grade School"),
+    Marital_Status = relevel(factor(Marital_Status), ref = "Single"),
+    Age_And_Presence_Of_Children = relevel(factor(Age_And_Presence_Of_Children), ref = "No Children Under 18"),
+  )
+merged_df$Median_monthly_housing_costs <- as.numeric(merged_df$Median_monthly_housing_costs)
+merged_df$move_status <- ave(merged_df$zip, merged_df$Household_Cd, FUN = function(x) if(length(unique(x)) > 1) 'move' else 'not move')
+merged_df <- na.omit(merged_df)
+merged_df <-merged_df %>% mutate( move_status = relevel(factor(move_status), ref = "not move"))
+```
+```{r}
+library(dplyr)
+
+# 计算不同的county-state组合的数量
+unique_county_state_combinations <- merged_df %>%
+  distinct(county, state) %>%
+  nrow()
+print(unique_county_state_combinations)
+```
+
+
+
+
+
+
+```{r}
+ols_model <- lm(status_score ~ Household_Income + giniindex  + head_age + head_education+ Household_Size + Marital_Status + Age_And_Presence_Of_Children + Population + Median_monthly_housing_costs,
+                data = merged_df)
+
+# 加载car包以计算VIF
+library(car)
+vif(ols_model)
+```
+
+```{r}
+state_county_year_avg <- merged_df %>%
+  group_by(state, county, year) %>%
+  summarise(
+    avg_giniindex = mean(giniindex, na.rm = TRUE),
+    avg_status_score = mean(status_score, na.rm = TRUE)
+  )
+
+average_trends <- state_county_year_avg %>%
+  group_by(year) %>%
+  summarise(
+    avg_giniindex = mean(avg_giniindex, na.rm = TRUE),
+    avg_status_score = mean(avg_status_score, na.rm = TRUE)
+  )
+library(ggplot2)
+library(ggrepel)
+
+# 绘制图表并使用 geom_text_repel 来避免标签重叠
+ggplot(data = average_trends, aes(x = avg_giniindex, y = avg_status_score)) +
+  geom_line() +  # 添加趋势线
+  geom_point()  +  # 添加平滑曲线
+  geom_text_repel(aes(label = year), size = 4) +  # 避免标签重叠
+  labs(
+    title = "Relationship between average gini index and average status score",
+    x = "Average Gini Index",
+    y = "Average Status Score"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+```{r}
+library(plm)
+library(dplyr)
+merged_df <- merged_df %>%
+  mutate(
+    Household_Income = scale(Household_Income),
+    giniindex = scale(giniindex),
+    Household_Size = scale(Household_Size),
+    Population = scale(Population),
+    Median_monthly_housing_costs = scale(Median_monthly_housing_costs)
+  )
+pdata <- pdata.frame(merged_df, index = c("Household_Cd","year"))
+
+full_model <- plm(status_score ~ Household_Income + giniindex  + head_age + head_education+ Household_Size + Marital_Status + Age_And_Presence_Of_Children + Population + Median_monthly_housing_costs ,
+                  data = pdata, 
+                  model = "within",
+                  cluster = "group")
+summary(full_model)
+```
+
+
+```{r}
+pdata <- pdata.frame(merged_df, index = c("Household_Cd","year"))
+
+model_interaction <- plm(status_score ~ Household_Income+move_status* giniindex+ head_age + Household_Size + head_education+ Marital_Status + Age_And_Presence_Of_Children + Population  + Median_monthly_housing_costs ,
+                  data = pdata, 
+                  model = "within",
+                  cluster = "group")
+summary(model_interaction )
+```
+
+
+```{r}
+pdata <- pdata.frame(merged_df, index = c("Household_Cd","year"))
+
+model_interaction <- plm(status_score ~ Household_Income* giniindex+ head_age + Household_Size + head_education+ Marital_Status + Age_And_Presence_Of_Children + Population + Median_monthly_housing_costs ,
+                  data = pdata, 
+                  model = "within",
+                  cluster = "group")
+summary(model_interaction )
+```
+
+
+
+
+
+
+```{r}
+# Subset the data into move and not move groups
+pdata_move <- subset(pdata, move_status == "move")
+pdata_not_move <- subset(pdata, move_status == "not move")
+
+# Fit the model for the move group
+model_move <- plm(status_score ~ Household_Income + giniindex + head_age + Household_Size + head_education +
+                    Marital_Status + Age_And_Presence_Of_Children + Population + Median_monthly_housing_costs,
+                  data = pdata_move, 
+                  model = "within",
+                  cluster = "group")
+
+# Summary of the move model
+summary(model_move)
+
+# Fit the model for the not move group
+model_not_move <- plm(status_score ~ Household_Income + giniindex + head_age + Household_Size + head_education +
+                        Marital_Status + Age_And_Presence_Of_Children + Population + Median_monthly_housing_costs,
+                      data = pdata_not_move, 
+                      model = "within",
+                      cluster = "group")
+
+# Summary of the not move model
+summary(model_not_move)
+```
+
+```{r}
+# Subset the data into move and not move groups
+pdata_move <- subset(pdata, move_status == "move")
+pdata_not_move <- subset(pdata, move_status == "not move")
+
+# Fit the model for the move group
+model_move <- plm(status_score ~ Household_Income *giniindex + head_age + Household_Size + head_education +
+                    Marital_Status + Age_And_Presence_Of_Children + Population + Median_monthly_housing_costs,
+                  data = pdata_move, 
+                  model = "within",
+                  cluster = "group")
+
+# Summary of the move model
+summary(model_move)
+
+# Fit the model for the not move group
+model_not_move <- plm(status_score ~ Household_Income*giniindex + head_age + Household_Size + head_education +
+                        Marital_Status + Age_And_Presence_Of_Children + Population + Median_monthly_housing_costs,
+                      data = pdata_not_move, 
+                      model = "within",
+                      cluster = "group")
+
+# Summary of the not move model
+summary(model_not_move)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
